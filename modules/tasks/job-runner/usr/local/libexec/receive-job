@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+
+while ! test -p /tmp/job-ready
+do
+    sleep 0.1
+done
+
+mkdir -m 0700 /tmp/secrets || exit 1
+tar --no-same-owner -xf - -C /tmp/secrets || exit 1
+
+printf '%s\0' "$@" > /tmp/job-ready || exit 1

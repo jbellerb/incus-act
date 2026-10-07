@@ -1,0 +1,15 @@
+[Unit]
+Description=Run one BuildKit job
+ConditionHost=!act-job-runner-template
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+Environment=HOME=/tmp/job-runner-home
+PassEnvironment=BUILDKIT_ADDR
+ExecStart=/usr/local/libexec/runner-init
+ExecStopPost=/usr/bin/systemctl --no-block poweroff
+
+[Install]
+WantedBy=multi-user.target

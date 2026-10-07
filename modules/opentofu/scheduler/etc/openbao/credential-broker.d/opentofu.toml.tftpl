@@ -1,0 +1,22 @@
+[[credentials]]
+unit = "task-opentofu.service"
+id = "incus-client"
+kv_path = "${secret_mount}/data/scheduler/incus"
+kv_field = "incus-client"
+
+[[credentials]]
+unit = "task-opentofu.service"
+id = "opentofu-incus-client"
+kv_path = "${secret_mount}/data/tasks/opentofu/incus"
+kv_field = "incus-client"
+
+[[credentials]]
+unit = "task-opentofu.service"
+id = "opentofu-s3-credentials"
+kv_path = "${secret_mount}/data/tasks/opentofu/s3"
+kv_field = "opentofu-s3-credentials"
+
+[[credentials]]
+unit = "task-opentofu.service"
+id = "openbao-approle-secret-id"
+approle_role = "tasks-opentofu"

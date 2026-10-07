@@ -1,0 +1,10 @@
+[grpc]
+  address = ["tcp://0.0.0.0:1234"]
+  [grpc.tls]
+    cert = "/var/lib/buildkit-tls/server/tls.crt"
+    key = "/var/lib/buildkit-tls/server/tls.key"
+    ca = "/var/lib/buildkit-tls/server/ca.crt"
+
+[worker.oci]
+  binary = "/usr/local/libexec/runsc"
+  networkMode = "bridge"

@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+
+mkdir -p "$HOME" || exit 1
+mkfifo -m 0600 /tmp/job-ready || exit 1
+
+exec xargs -0 -r -x /usr/local/libexec/job-runner < /tmp/job-ready

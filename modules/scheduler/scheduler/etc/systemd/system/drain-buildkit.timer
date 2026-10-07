@@ -1,0 +1,10 @@
+[Unit]
+Description=Check for drained BuildKit generations
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

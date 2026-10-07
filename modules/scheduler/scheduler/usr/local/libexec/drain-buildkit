@@ -1,0 +1,159 @@
+#!/usr/bin/python3
+"""Remove previous BuildKit generations after their last runner exits."""
+
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+NAME = re.compile(r"act-buildkit-[0-9a-f]{12}$")
+ACTIVATED = "user.incus-act.activated"
+MARKERS = Path("/run/buildkit-drain")
+
+
+def command(*args):
+    return subprocess.run(
+        args, check=True, capture_output=True, text=True, timeout=30
+    ).stdout
+
+
+def incus(*args):
+    return command("incus", *args)
+
+
+def main():
+    try:
+        with tempfile.TemporaryDirectory(prefix="task-incus-") as config_path:
+            drain(Path(config_path))
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        stderr = exc.stderr or ""
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode(errors="replace")
+        print(stderr.strip() or str(exc), file=sys.stderr)
+        raise SystemExit(1)
+
+
+def drain(config):
+    credentials = Path(os.environ["CREDENTIALS_DIRECTORY"])
+    (config / "config.yml").symlink_to("/etc/incus/config.yml")
+    pair = json.loads((credentials / "incus-client").read_text())
+    for name, field in (("client.crt", "certificate"), ("client.key", "private_key")):
+        path = config / name
+        path.write_text(pair[field])
+        path.chmod(0o600)
+    os.environ["INCUS_CONF"] = str(config)
+    remote = incus("remote", "get-default").strip()
+    (config / "servercerts").mkdir()
+    (config / "servercerts" / f"{remote}.crt").symlink_to("/etc/incus/server.crt")
+
+    instances = json.loads(incus("list", f"{remote}:", "--format=json"))
+    template = next(
+        (
+            instance
+            for instance in instances
+            if instance["name"] == "act-job-runner-template"
+        ),
+        None,
+    )
+    if template is None:
+        return
+    current_scheduler = template["config"]["user.incus-act.scheduler"]
+    if socket.gethostname().split(".", 1)[0] != current_scheduler:
+        return
+    # a template update precedes creation of the new task host. Do not retire
+    # anything until the credential broker is healthy.
+    host = next((i for i in instances if i["name"] == current_scheduler), None)
+    if host is None or host["status"] != "Running":
+        return
+    if json.loads(command("cloud-init", "status", "--format=json"))["status"] != "done":
+        return
+    command("systemctl", "is-active", "openbao-credential-broker.service")
+    pool = template["expanded_devices"]["act-client-tls"]["pool"]
+    current = template["config"]["user.incus-act.builder"]
+    runners = {
+        instance["config"].get("user.incus-act.builder")
+        for instance in instances
+        if instance["name"] != "act-job-runner-template"
+        and instance["config"].get("user.incus-act.role") == "job-runner"
+    }
+    builders = {
+        instance["name"]: instance
+        for instance in instances
+        if NAME.fullmatch(instance["name"])
+        and instance["config"].get("user.incus-act.role") == "buildkit"
+    }
+    volumes = {
+        volume["name"].removesuffix("-client-tls"): volume
+        for volume in json.loads(
+            incus("storage", "volume", "list", f"{remote}:{pool}", "--format=json")
+        )
+        if volume["type"] == "custom"
+        and volume["name"].endswith("-client-tls")
+        and NAME.fullmatch(volume["name"].removesuffix("-client-tls"))
+    }
+    if current not in builders or current not in volumes:
+        return
+    if builders[current]["config"].get(ACTIVATED) != "true":
+        incus("config", "set", f"{remote}:{current}", f"{ACTIVATED}=true")
+    if volumes[current].get("config", {}).get(ACTIVATED) != "true":
+        incus(
+            "storage", "volume", "set", f"{remote}:{pool}",
+            f"{current}-client-tls", f"{ACTIVATED}=true",
+        )
+    instance_names = {instance["name"] for instance in instances}
+    MARKERS.mkdir(mode=0o700, exist_ok=True)
+    (MARKERS / current).unlink(missing_ok=True)
+    candidates = {
+        name for name, instance in builders.items()
+        if instance["config"].get(ACTIVATED) == "true"
+    } | {
+        name for name, volume in volumes.items()
+        if name not in instance_names
+        and volume.get("config", {}).get(ACTIVATED) == "true"
+    }
+    for marker in MARKERS.iterdir():
+        if NAME.fullmatch(marker.name) and marker.name not in candidates:
+            marker.unlink()
+    now = time.monotonic()
+    for name in sorted(candidates - {current}):
+        marker = MARKERS / name
+        if name in runners:
+            marker.unlink(missing_ok=True)
+            continue
+        if name not in builders and name not in volumes:
+            marker.unlink(missing_ok=True)
+            continue
+        if not marker.exists():
+            marker.write_text(str(now))
+            continue
+        if now - float(marker.read_text()) < 60:
+            continue
+        latest = json.loads(incus("list", f"{remote}:", "--format=json"))
+        if not any(i["name"] == "act-job-runner-template" for i in latest):
+            return
+        if any(
+            instance["config"].get("user.incus-act.builder") == name
+            and (
+                instance["name"] == "act-job-runner-template"
+                or instance["config"].get("user.incus-act.role") == "job-runner"
+            )
+            for instance in latest
+        ):
+            marker.unlink(missing_ok=True)
+            continue
+        if name in builders:
+            incus("delete", "--force", f"{remote}:{name}")
+        if name in volumes:
+            incus(
+                "storage", "volume", "delete", f"{remote}:{pool}", f"{name}-client-tls"
+            )
+        marker.unlink(missing_ok=True)
+
+
+if __name__ == "__main__":
+    main()

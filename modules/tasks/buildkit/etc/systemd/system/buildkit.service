@@ -1,0 +1,13 @@
+[Unit]
+Description=BuildKit
+Wants=network-online.target
+After=network-online.target
+Documentation=https://github.com/moby/buildkit
+
+[Service]
+Type=notify
+ExecStartPre=/usr/bin/test -s /var/lib/buildkit-tls/server/tls.key
+ExecStart=/usr/local/bin/buildkitd
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+#cloud-config
+package_update: true
+packages:
+  - ca-certificates
+  - incus-client
+  - jq
+  - python3-minimal
+runcmd:
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, openbao-credential-broker.service]
+  - [systemctl, enable, --now, drain-buildkit.timer]

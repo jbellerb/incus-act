@@ -1,0 +1,12 @@
+[Unit]
+Description=Apply Incus and OpenBao configuration
+
+[Service]
+Type=oneshot
+PrivateTmp=yes
+ExecStart=/usr/local/libexec/run-job-runner build \
+    --frontend=dockerfile.v0 \
+    --local=context=/root/task-opentofu \
+    --local=dockerfile=/root/task-opentofu \
+    --no-cache
+TimeoutStartSec=infinity

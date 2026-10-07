@@ -1,0 +1,27 @@
+#!/usr/bin/env sh
+
+server=/var/lib/buildkit-tls/server
+client=/var/lib/buildkit-tls/client
+name=$(hostname)
+mkdir -p "$server" "$client" || exit 1
+chmod 0700 "$server" "$client" || exit 1
+
+openssl req -x509 -newkey rsa:3072 -noenc -days 3650 \
+    -subj "/CN=$name BuildKit CA" \
+    -keyout "$server/ca.key" -out "$server/ca.crt" || exit 1
+openssl req -new -newkey rsa:3072 -noenc \
+    -subj "/CN=$name.incus" \
+    -keyout "$server/tls.key" -out "$server/server.csr" || exit 1
+printf 'subjectAltName=DNS:%s.incus\nextendedKeyUsage=serverAuth\n' "$name" > "$server/server.ext" || exit 1
+openssl x509 -req -days 3650 -sha256 \
+    -in "$server/server.csr" -CA "$server/ca.crt" -CAkey "$server/ca.key" \
+    -CAcreateserial -extfile "$server/server.ext" -out "$server/tls.crt" || exit 1
+openssl req -new -newkey rsa:3072 -noenc \
+    -subj "/CN=job-runner" \
+    -keyout "$client/tls.key" -out "$server/client.csr" || exit 1
+printf 'extendedKeyUsage=clientAuth\n' > "$server/client.ext" || exit 1
+openssl x509 -req -days 3650 -sha256 \
+    -in "$server/client.csr" -CA "$server/ca.crt" -CAkey "$server/ca.key" \
+    -CAcreateserial -extfile "$server/client.ext" -out "$client/tls.crt" || exit 1
+cp "$server/ca.crt" "$client/ca.crt" || exit 1
+chmod 0600 "$server"/*.key "$client"/*.key || exit 1

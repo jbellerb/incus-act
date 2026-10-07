@@ -1,0 +1,60 @@
+#!/usr/bin/env sh
+
+# runsc wrapper simulate the --keep flag required by BuildKit.
+
+set -f
+
+parse_args() {
+    while test $# -gt 0
+    do
+        case "$1" in
+        run) run=1; globals="$args"; args=""; shift ;;
+        "--keep") keep=1; shift ;;
+        "--bundle") bundle=$2; shift 2 ;;
+        *) args="$args${args:+
+}$1"; shift ;;
+        esac
+    done
+}
+
+runsc() {
+    old_ifs=$IFS
+    IFS='
+'
+    set -- $globals --network=host --overlay2=none "$@" $args
+    IFS=$old_ifs
+
+    /usr/bin/runsc "$@"
+}
+
+parse_args "$@"
+
+if test -z "$run" || test -z "$keep"
+then
+    exec /usr/bin/runsc --network=host --overlay2=none "$@"
+fi
+
+config="$bundle/config.json"
+
+# to emulate --keep, we have to run create, start, and wait as separate
+# processes. This introduces a race condition where the process exits before
+# wait runs and we lose the output status. A good solution is patching gVisor
+# to support --keep. A bad solution is injecting a 1 second sleep. This breaks
+# if the OCI image lacks shell utilities.
+jq '
+  .process.args as $args |
+  .process.args = [
+    "/usr/bin/env", "sh", "-c",
+    "\"$@\"; rc=$?; sleep 1; exit $rc",
+    "--"
+  ] + $args
+' "$config" > "$config.tmp" || exit 1
+mv "$config" "$config.old" || exit 1
+trap 'mv "$config.old" "$config"' EXIT
+mv "$config.tmp" "$config" || exit 1
+
+runsc create --bundle="$bundle" || exit $?
+runsc start || exit $?
+status=$(runsc wait | jq -r '.exitStatus') || exit $?
+
+exit "$status"

@@ -1,0 +1,8 @@
+[Unit]
+Description=Remove drained BuildKit generations
+
+[Service]
+Type=oneshot
+PrivateTmp=yes
+ExecStart=/usr/local/libexec/drain-buildkit
+TimeoutStartSec=infinity

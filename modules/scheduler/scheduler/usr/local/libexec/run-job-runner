@@ -1,0 +1,34 @@
+#!/usr/bin/env sh
+
+incus_conf=$(mktemp -d /tmp/task-incus.XXXXXX) || exit 1
+runner=
+cleanup() {
+    if test -n "$runner"
+    then
+        incus delete --force "$runner" > /dev/null 2>&1
+    fi
+    rm -rf "$incus_conf"
+}
+trap cleanup EXIT
+
+ln -s /etc/incus/config.yml "$incus_conf/config.yml" || exit 1
+jq -er .certificate "$CREDENTIALS_DIRECTORY/incus-client" \
+    > "$incus_conf/client.crt" || exit 1
+jq -er .private_key "$CREDENTIALS_DIRECTORY/incus-client" \
+    > "$incus_conf/client.key" || exit 1
+chmod 600 "$incus_conf/client.crt" "$incus_conf/client.key" || exit 1
+export INCUS_CONF=$incus_conf
+remote=$(incus remote get-default) || exit 1
+mkdir "$incus_conf/servercerts" || exit 1
+ln -s /etc/incus/server.crt "$incus_conf/servercerts/$remote.crt" \
+    || exit 1
+
+runner="$remote:act-job-runner-$(cat /proc/sys/kernel/random/uuid)"
+incus copy --instance-only --ephemeral "$remote:act-job-runner-template" "$runner" \
+    || exit 1
+incus start "$runner" || exit 1
+
+tar -C "$CREDENTIALS_DIRECTORY" -cf - . |
+    incus exec "$runner" -- /usr/local/libexec/receive-job "$@" || exit 1
+echo "Submitted build to $runner"
+runner=

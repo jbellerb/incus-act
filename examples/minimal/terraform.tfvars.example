@@ -1,0 +1,2 @@
+incus_address   = "https://incus.example.com:8443"
+openbao_address = "https://openbao.example.com:8200"

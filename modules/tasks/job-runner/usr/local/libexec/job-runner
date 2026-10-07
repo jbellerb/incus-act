@@ -1,0 +1,30 @@
+#!/usr/bin/env sh
+
+job=$(hostname)
+result=/var/log/task-jobs/$job
+exec > "$result.log" 2>&1
+status=1
+
+finish() {
+    printf '%s\n' "$status" > "$result.status.tmp" &&
+        mv "$result.status.tmp" "$result.status"
+}
+trap finish EXIT
+trap 'exit 1' HUP INT TERM
+
+set -- /usr/local/bin/buildctl \
+    --addr="$BUILDKIT_ADDR" \
+    --tlscacert=/etc/buildkit-client/ca.crt \
+    --tlscert=/etc/buildkit-client/tls.crt \
+    --tlskey=/etc/buildkit-client/tls.key \
+    "$@"
+
+for file in /tmp/secrets/*
+do
+    test -f "$file" || continue
+    set -- "$@" "--secret=id=${file##*/},src=$file"
+done
+
+"$@"
+status=$?
+exit "$status"
